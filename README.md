@@ -6,6 +6,31 @@ A Java port of [Spiffy.Monitoring](https://github.com/chris-peterson/Spiffy) —
 
 The goal is cross-stack fluency: a team running .NET services on Spiffy and JVM services on Jiffy can share Splunk dashboards, query patterns, and mental models with no translation step.
 
+## Install
+
+Published to [Maven Central](https://central.sonatype.com/artifact/io.github.jadevance/jiffy-core) as `io.github.jadevance:jiffy-core` (not yet released — coming with `v0.1.0`).
+
+Gradle:
+```kotlin
+dependencies {
+    implementation("io.github.jadevance:jiffy-core:0.1.0")
+}
+```
+
+Maven:
+```xml
+<dependency>
+    <groupId>io.github.jadevance</groupId>
+    <artifactId>jiffy-core</artifactId>
+    <version>0.1.0</version>
+</dependency>
+```
+
+sbt:
+```scala
+libraryDependencies += "io.github.jadevance" % "jiffy-core" % "0.1.0"
+```
+
 ## Usage
 
 ```java
