@@ -8,7 +8,7 @@ The goal is cross-stack fluency: a team running .NET services on Spiffy and JVM 
 
 ## Install
 
-Published to [Maven Central](https://central.sonatype.com/artifact/io.github.jadevance/jiffy-core) as `io.github.jadevance:jiffy-core` (not yet released — coming with `v0.1.0`).
+Published to [Maven Central](https://central.sonatype.com/artifact/io.github.jadevance/jiffy-core) as `io.github.jadevance:jiffy-core`.
 
 Gradle:
 ```kotlin
