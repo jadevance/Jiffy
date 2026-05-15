@@ -1,5 +1,7 @@
 # Jiffy
 
+[![Build](https://github.com/jadevance/Jiffy/actions/workflows/build.yml/badge.svg)](https://github.com/jadevance/Jiffy/actions/workflows/build.yml)
+
 A Java port of [Spiffy.Monitoring](https://github.com/chris-peterson/Spiffy) — structured logging for the JVM with field names, output format, and idioms that match Spiffy line-for-line.
 
 The goal is cross-stack fluency: a team running .NET services on Spiffy and JVM services on Jiffy can share Splunk dashboards, query patterns, and mental models with no translation step.
