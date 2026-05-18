@@ -3,15 +3,19 @@ package io.github.jadevance.jiffy;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Supplier;
 
 public class EventContext implements AutoCloseable {
+
+    private static final String DEFAULT_EXCEPTION_PREFIX = "Exception";
 
     private final long startNanos = System.nanoTime();
     private final Map<String, Object> fields = new LinkedHashMap<>();
@@ -21,13 +25,13 @@ public class EventContext implements AutoCloseable {
     private Map<String, TimedScope> timers;
     private Map<String, Long> counters;
     private Set<String> suppressedFields;
+    private List<CapturedException> capturedExceptions;
 
     private Instant startTimestamp = Instant.now();
     private String component;
     private String operation;
     private Level level = Level.INFO;
     private String reason;
-    private Throwable capturedException;
     private boolean suppressed = false;
     private boolean closed = false;
 
@@ -51,6 +55,16 @@ public class EventContext implements AutoCloseable {
         return this;
     }
 
+    public EventContext setComponent(String component) {
+        this.component = component;
+        return this;
+    }
+
+    public EventContext setOperation(String operation) {
+        this.operation = operation;
+        return this;
+    }
+
     public EventContext set(String key, Object value) {
         return set(key, value, FieldConflict.OVERWRITE);
     }
@@ -67,12 +81,28 @@ public class EventContext implements AutoCloseable {
         return this;
     }
 
+    public Object get(String key) {
+        return fields.get(key);
+    }
+
     public EventContext trySet(String key, Supplier<Object> valueFn) {
+        return trySet(key, valueFn, FieldConflict.OVERWRITE);
+    }
+
+    public EventContext trySet(String key, Supplier<Object> valueFn, FieldConflict behavior) {
         try {
-            return set(key, valueFn.get());
+            return set(key, valueFn.get(), behavior);
         } catch (Throwable ignored) {
             return this;
         }
+    }
+
+    public EventContext addValues(Map<String, Object> values) {
+        if (values == null) return this;
+        for (var e : values.entrySet()) {
+            set(e.getKey(), e.getValue());
+        }
+        return this;
     }
 
     public TimedScope time(String key) {
@@ -134,8 +164,13 @@ public class EventContext implements AutoCloseable {
     }
 
     public EventContext includeException(Throwable t) {
+        return includeException(t, null);
+    }
+
+    public EventContext includeException(Throwable t, String keyPrefix) {
         setToError("An exception has occurred");
-        this.capturedException = t;
+        if (capturedExceptions == null) capturedExceptions = new ArrayList<>();
+        capturedExceptions.add(new CapturedException(t, keyPrefix));
         return this;
     }
 
@@ -150,10 +185,18 @@ public class EventContext implements AutoCloseable {
         return this;
     }
 
+    public EventContext setToWarning() {
+        return setToWarning(null);
+    }
+
     public EventContext setToWarning(String reason) {
         this.level = Level.WARNING;
         this.reason = reason;
         return this;
+    }
+
+    public EventContext setToError() {
+        return setToError(null);
     }
 
     public EventContext setToError(String reason) {
@@ -214,19 +257,9 @@ public class EventContext implements AutoCloseable {
             out.put(reasonKey, reason);
         }
 
-        if (capturedException != null) {
-            Throwable t = capturedException;
-            out.put(naming.exceptionType(), t.getClass().getName());
-            out.put(naming.exceptionMessage(), String.valueOf(t.getMessage()));
-            out.put(naming.exceptionStackTrace(), stackTraceString(t));
-            Throwable innermost = t;
-            while (innermost.getCause() != null && innermost.getCause() != innermost) {
-                innermost = innermost.getCause();
-            }
-            if (innermost != t) {
-                out.put(naming.innermostExceptionType(), innermost.getClass().getName());
-                out.put(naming.innermostExceptionMessage(), String.valueOf(innermost.getMessage()));
-                out.put(naming.innermostExceptionStackTrace(), stackTraceString(innermost));
+        if (capturedExceptions != null) {
+            for (CapturedException ex : capturedExceptions) {
+                emitException(out, naming, ex.throwable(), ex.keyPrefix());
             }
         }
 
@@ -251,6 +284,37 @@ public class EventContext implements AutoCloseable {
         }
 
         cfg.emit(new EventEmission(startTimestamp, level, out));
+    }
+
+    private static void emitException(Map<String, Object> out, NamingConvention naming, Throwable t, String customPrefix) {
+        String typeKey, msgKey, stackKey, innerTypeKey, innerMsgKey, innerStackKey;
+        if (customPrefix == null) {
+            typeKey = naming.exceptionType();
+            msgKey = naming.exceptionMessage();
+            stackKey = naming.exceptionStackTrace();
+            innerTypeKey = naming.innermostExceptionType();
+            innerMsgKey = naming.innermostExceptionMessage();
+            innerStackKey = naming.innermostExceptionStackTrace();
+        } else {
+            typeKey = customPrefix + "_Type";
+            msgKey = customPrefix + "_Message";
+            stackKey = customPrefix + "_StackTrace";
+            innerTypeKey = "Innermost" + customPrefix + "_Type";
+            innerMsgKey = "Innermost" + customPrefix + "_Message";
+            innerStackKey = "Innermost" + customPrefix + "_StackTrace";
+        }
+        out.put(typeKey, t.getClass().getName());
+        out.put(msgKey, String.valueOf(t.getMessage()));
+        out.put(stackKey, stackTraceString(t));
+        Throwable innermost = t;
+        while (innermost.getCause() != null && innermost.getCause() != innermost) {
+            innermost = innermost.getCause();
+        }
+        if (innermost != t) {
+            out.put(innerTypeKey, innermost.getClass().getName());
+            out.put(innerMsgKey, String.valueOf(innermost.getMessage()));
+            out.put(innerStackKey, stackTraceString(innermost));
+        }
     }
 
     public interface TimedScope extends AutoCloseable {
@@ -281,6 +345,8 @@ public class EventContext implements AutoCloseable {
             return elapsedNanos < 0L;
         }
     }
+
+    private record CapturedException(Throwable throwable, String keyPrefix) {}
 
     private static double round1(double v) {
         return Math.round(v * 10.0) / 10.0;

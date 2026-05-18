@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -317,6 +318,111 @@ class EventContextTest {
         assertEquals("admin", fields.get("user_role"));
         assertEquals("userOverride", fields.get("Component"));
         assertEquals("C", fields.get("component"), "library-emitted component uses Java convention");
+    }
+
+    @Test
+    void getReturnsPreviouslySetValueAndNullForUnset() {
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.set("UserId", 42);
+            assertEquals(42, ctx.get("UserId"));
+            assertNull(ctx.get("Missing"));
+        }
+    }
+
+    @Test
+    void setComponentAndSetOperationUpdateIndependently() {
+        try (var ctx = new EventContext("Orig", "OrigOp")) {
+            ctx.setComponent("NewSvc");
+            ctx.setOperation("NewOp");
+            assertEquals("NewSvc", ctx.component());
+            assertEquals("NewOp", ctx.operation());
+        }
+        var fields = captured.get(0).fields();
+        assertEquals("NewSvc", fields.get("c"));
+        assertEquals("NewOp", fields.get("o"));
+    }
+
+    @Test
+    void trySetWithFieldConflictHonorsBehavior() {
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.set("Tag", "first");
+            ctx.trySet("Tag", () -> "second", FieldConflict.IGNORE);
+            ctx.trySet("Tag", () -> "appended", FieldConflict.APPEND);
+        }
+        assertEquals("first,appended", captured.get(0).fields().get("Tag"));
+    }
+
+    @Test
+    void addValuesBatchInsertsMap() {
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.addValues(Map.of("A", 1, "B", 2));
+        }
+        var fields = captured.get(0).fields();
+        assertEquals(1, fields.get("A"));
+        assertEquals(2, fields.get("B"));
+    }
+
+    @Test
+    void addValuesIgnoresNullMap() {
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.addValues(null);
+        }
+        assertEquals(1, captured.size());
+    }
+
+    @Test
+    void includeExceptionWithCustomPrefixUsesLiteralKeys() {
+        try (var ctx = new EventContext("C", "Op")) {
+            try {
+                try {
+                    throw new IllegalStateException("inner");
+                } catch (IllegalStateException e) {
+                    throw new RuntimeException("outer", e);
+                }
+            } catch (RuntimeException e) {
+                ctx.includeException(e, "ApiError");
+            }
+        }
+
+        var fields = captured.get(0).fields();
+        assertEquals(RuntimeException.class.getName(), fields.get("ApiError_Type"));
+        assertEquals("outer", fields.get("ApiError_Message"));
+        assertNotNull(fields.get("ApiError_StackTrace"));
+        assertEquals(IllegalStateException.class.getName(), fields.get("InnermostApiError_Type"));
+        assertEquals("inner", fields.get("InnermostApiError_Message"));
+
+        assertFalse(fields.containsKey("Exception_Type"));
+    }
+
+    @Test
+    void multipleIncludeExceptionsWithDifferentPrefixesAllEmitted() {
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.includeException(new RuntimeException("first"), "ParseError");
+            ctx.includeException(new IllegalArgumentException("second"), "ValidationError");
+        }
+        var fields = captured.get(0).fields();
+        assertEquals(RuntimeException.class.getName(), fields.get("ParseError_Type"));
+        assertEquals(IllegalArgumentException.class.getName(), fields.get("ValidationError_Type"));
+    }
+
+    @Test
+    void setToErrorParameterlessSetsLevelWithoutReason() {
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.setToError();
+        }
+        var fields = captured.get(0).fields();
+        assertEquals("Error", fields.get("l"));
+        assertFalse(fields.containsKey("msg"));
+    }
+
+    @Test
+    void setToWarningParameterlessSetsLevelWithoutReason() {
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.setToWarning();
+        }
+        var fields = captured.get(0).fields();
+        assertEquals("Warning", fields.get("l"));
+        assertFalse(fields.containsKey("msg"));
     }
 
     @Test
