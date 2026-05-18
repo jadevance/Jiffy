@@ -2,7 +2,6 @@ package io.github.jadevance.jiffy;
 
 public interface NamingConvention {
 
-    String application();
     String level();
     String component();
     String operation();
@@ -22,5 +21,6 @@ public interface NamingConvention {
     String count(String key);
 
     NamingConvention SPIFFY = new SpiffyNamingConvention();
+    NamingConvention LEGACY = new LegacyNamingConvention();
     NamingConvention JAVA = new JavaNamingConvention();
 }

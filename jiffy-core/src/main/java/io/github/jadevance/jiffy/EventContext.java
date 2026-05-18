@@ -147,16 +147,20 @@ public class EventContext implements AutoCloseable {
 
     public void setToInfo() {
         this.level = Level.INFO;
+        this.errorReason = null;
+        this.warningReason = null;
     }
 
     public void setToWarning(String reason) {
         this.level = Level.WARNING;
         this.warningReason = reason;
+        this.errorReason = null;
     }
 
     public void setToError(String reason) {
         this.level = Level.ERROR;
         this.errorReason = reason;
+        this.warningReason = null;
     }
 
     public Level level() {

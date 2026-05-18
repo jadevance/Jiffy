@@ -17,7 +17,7 @@ Published to [Maven Central](https://central.sonatype.com/artifact/io.github.jad
 Gradle:
 ```kotlin
 dependencies {
-    implementation("io.github.jadevance:jiffy-core:0.1.0")
+    implementation("io.github.jadevance:jiffy-core:0.1.2")
 }
 ```
 
@@ -26,13 +26,13 @@ Maven:
 <dependency>
     <groupId>io.github.jadevance</groupId>
     <artifactId>jiffy-core</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.2</version>
 </dependency>
 ```
 
 sbt:
 ```scala
-libraryDependencies += "io.github.jadevance" % "jiffy-core" % "0.1.0"
+libraryDependencies += "io.github.jadevance" % "jiffy-core" % "0.1.2"
 ```
 
 ## Usage
@@ -46,10 +46,10 @@ try (var ctx = new EventContext("UserService", "CreateUser")) {
 }
 ```
 
-Emits one structured event on close:
+Emits one structured event on close (default `SpiffyNamingConvention`, matching Spiffy 7.x short field names):
 
 ```
-[2026-05-15 14:23:01.234Z] Application=my-app Level=Info Component=UserService Operation=CreateUser TimeElapsed=42.7 UserId=abc123 TimeElapsed_DbInsert=38.1
+[2026-05-15 14:23:01.234Z] Application=my-app l=Info c=UserService o=CreateUser ms=42.7 UserId=abc123 ms_DbInsert=38.1
 ```
 
 ## Configuration
@@ -74,8 +74,8 @@ Configuration.initialize(c -> c
 |------------------------|:-----:|-------|
 | `EventContext(component, operation)` | done  | |
 | `Set(key, value)`      | done  | `set(...)` |
-| `Time(key)`            | done  | returns `AutoCloseable`; emits `TimeElapsed_<key>` |
-| `IncludeException`     | done  | escalates Level to Error, adds `ErrorReason="An exception has occurred"` (typo fixed from Spiffy original) |
+| `Time(key)`            | done  | returns `AutoCloseable`; emits `<timeElapsed()>_<key>` (e.g. `ms_DbInsert` under default short convention) |
+| `IncludeException`     | done  | escalates Level to Error, sets the reason to `"An exception has occurred"` (typo fixed from Spiffy original); emitted as `msg=` under short / `ErrorReason=` under legacy |
 | `SetToInfo/Warning/Error` | done | |
 | `Suppress / SuppressFields` | done | |
 | `Count(key)`           | done  | emits `Count_<key>` |
@@ -85,7 +85,7 @@ Configuration.initialize(c -> c
 | `TimerCollection Timers` property | done | `timers()` returns an unmodifiable `Map<String, TimedScope>`; each scope exposes `elapsedMilliseconds()` and `isRunning()` |
 | `PrivateData`          | done  | `setPrivate / getPrivate / containsPrivate / privateData()`; never emitted |
 | `CustomTimestamp`      | done  | `setCustomTimestamp(Instant)`; overrides the event timestamp at emit time |
-| `FieldName` lookup     | done  | Replaced by pluggable [`NamingConvention`](#naming-conventions); `NamingConvention.SPIFFY` (default) returns Spiffy canonical names, `NamingConvention.JAVA` returns camelCase |
+| `IFieldNameLookup`     | done  | Pluggable [`NamingConvention`](#naming-conventions): `SPIFFY` (default, matches Spiffy 7.x `ShortFieldNameLookup`), `LEGACY` (matches Spiffy 6.x `LegacyFieldNameLookup`), `JAVA` (camelCase) |
 
 ## Advanced usage
 
@@ -121,21 +121,28 @@ try (var ctx = new EventContext("Pipeline", "Run")) {
 
 ## Naming conventions
 
-Jiffy ships two naming conventions for **library-emitted standard fields** (`Level`, `Component`, `Operation`, `TimeElapsed`, `ErrorReason`, `Exception_Type`, …):
+Jiffy ships three naming conventions for **library-emitted standard fields**:
 
-- `NamingConvention.SPIFFY` — **default**. Matches the .NET Spiffy library exactly so Splunk dashboards, alerts, and queries written against a Spiffy stack work unchanged.
-- `NamingConvention.JAVA` — idiomatic Java camelCase (`level`, `component`, `timeElapsed`, `errorReason`, `exceptionType`, `timeElapsed_DbInsert`, `count_Hits`). For projects that don't share Splunk infrastructure with a Spiffy-based service and prefer Java conventions in their log output.
+| Convention | Level | Component | Operation | TimeElapsed | Reason | Per-timer | Count |
+|---|---|---|---|---|---|---|---|
+| `SPIFFY` *(default — matches Spiffy 7.x `ShortFieldNameLookup`)* | `l` | `c` | `o` | `ms` | `msg` *(error & warning collapse)* | `ms_<key>` | `Count_<key>` |
+| `LEGACY` *(matches Spiffy 6.x `LegacyFieldNameLookup`)* | `Level` | `Component` | `Operation` | `TimeElapsed` | `ErrorReason` / `WarningReason` | `TimeElapsed_<key>` | `Count_<key>` |
+| `JAVA` *(idiomatic camelCase for OSS Java users)* | `level` | `component` | `operation` | `timeElapsed` | `message` *(collapse)* | `timeElapsed_<key>` | `count_<key>` |
+
+Exception fields under `SPIFFY` and `LEGACY` are hardcoded as in Spiffy itself: `Exception_Type`, `Exception_Message`, `Exception_StackTrace`, `InnermostException_*`. Under `JAVA` they are `exceptionType`, `exceptionMessage`, `exceptionStackTrace`, `innermostException*`.
 
 Select at configuration time:
 
 ```java
 Configuration.initialize(c -> c
-    .naming(NamingConvention.JAVA)
+    .naming(NamingConvention.LEGACY)   // or .SPIFFY (default) / .JAVA
     .providers().slf4j()
 );
 ```
 
 **Scope**: only library-emitted standard fields go through the convention. User-provided keys passed to `set(...)` are emitted verbatim — your `ctx.set("UserId", 42)` always emits `UserId=42` regardless of the active convention. This keeps the convention boundary explicit and lets you adopt your own house style for domain fields.
+
+**msg-field collapse**: under `SPIFFY` and `JAVA`, error and warning reasons share one field (`msg` / `message`) — matching Spiffy's design. Switching the level via `setToInfo()` / `setToWarning()` / `setToError()` automatically clears any prior reason so the emitted `msg` always agrees with `l`.
 
 Custom conventions: implement `NamingConvention` directly if you need snake_case, SCREAMING_SNAKE, or anything else.
 

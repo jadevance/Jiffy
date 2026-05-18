@@ -27,11 +27,11 @@ class EventContextTest {
 
         assertEquals(1, captured.size());
         var fields = captured.get(0).fields();
-        assertEquals("UserService", fields.get("Component"));
-        assertEquals("CreateUser", fields.get("Operation"));
+        assertEquals("UserService", fields.get("c"));
+        assertEquals("CreateUser", fields.get("o"));
         assertEquals(42, fields.get("UserId"));
-        assertEquals("Info", fields.get("Level"));
-        assertNotNull(fields.get("TimeElapsed"));
+        assertEquals("Info", fields.get("l"));
+        assertNotNull(fields.get("ms"));
     }
 
     @Test
@@ -42,8 +42,8 @@ class EventContextTest {
             }
         }
         var fields = captured.get(0).fields();
-        assertNotNull(fields.get("TimeElapsed_Inner"));
-        assertTrue(((Number) fields.get("TimeElapsed_Inner")).doubleValue() >= 4.0);
+        assertNotNull(fields.get("ms_Inner"));
+        assertTrue(((Number) fields.get("ms_Inner")).doubleValue() >= 4.0);
     }
 
     @Test
@@ -56,8 +56,8 @@ class EventContextTest {
             }
         }
         var fields = captured.get(0).fields();
-        assertEquals("Error", fields.get("Level"));
-        assertEquals("An exception has occurred", fields.get("ErrorReason"));
+        assertEquals("Error", fields.get("l"));
+        assertEquals("An exception has occurred", fields.get("msg"));
         assertEquals(RuntimeException.class.getName(), fields.get("Exception_Type"));
         assertEquals("boom", fields.get("Exception_Message"));
         assertNotNull(fields.get("Exception_StackTrace"));
@@ -193,8 +193,8 @@ class EventContextTest {
             outer.close();
         }
         var fields = captured.get(0).fields();
-        assertNotNull(fields.get("TimeElapsed_Outer"));
-        assertNotNull(fields.get("TimeElapsed_Inner"));
+        assertNotNull(fields.get("ms_Outer"));
+        assertNotNull(fields.get("ms_Inner"));
     }
 
     @Test
@@ -206,13 +206,70 @@ class EventContextTest {
     }
 
     @Test
-    void defaultConventionIsSpiffy() {
+    void defaultConventionIsSpiffyShort() {
         try (var ctx = new EventContext("UserSvc", "Op")) { /* no-op */ }
+        var fields = captured.get(0).fields();
+        assertTrue(fields.containsKey("l"));
+        assertTrue(fields.containsKey("c"));
+        assertTrue(fields.containsKey("o"));
+        assertTrue(fields.containsKey("ms"));
+
+        assertFalse(fields.containsKey("Level"));
+        assertFalse(fields.containsKey("Component"));
+    }
+
+    @Test
+    void legacyConventionEmitsPascalCaseStandardFields() {
+        Configuration.initialize(c -> c
+            .naming(NamingConvention.LEGACY)
+            .providers().add(captured::add));
+
+        try (var ctx = new EventContext("UserSvc", "Op")) {
+            ctx.setToError("bad");
+            ctx.count("Hits");
+            try (var t = ctx.time("DbInsert")) { /* no-op */ }
+        }
+
         var fields = captured.get(0).fields();
         assertTrue(fields.containsKey("Level"));
         assertTrue(fields.containsKey("Component"));
         assertTrue(fields.containsKey("Operation"));
         assertTrue(fields.containsKey("TimeElapsed"));
+        assertTrue(fields.containsKey("ErrorReason"));
+        assertTrue(fields.containsKey("Count_Hits"));
+        assertTrue(fields.containsKey("TimeElapsed_DbInsert"));
+        assertFalse(fields.containsKey("WarningReason"));
+
+        assertFalse(fields.containsKey("l"));
+        assertFalse(fields.containsKey("msg"));
+        assertFalse(fields.containsKey("ms"));
+        assertFalse(fields.containsKey("ms_DbInsert"));
+    }
+
+    @Test
+    void spiffyConventionCollapsesErrorAndWarningReasonToMsg() {
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.setToWarning("first warn");
+            ctx.setToError("now an error");
+        }
+
+        var fields = captured.get(0).fields();
+        assertEquals("Error", fields.get("l"));
+        assertEquals("now an error", fields.get("msg"));
+        assertFalse(fields.containsKey("WarningReason"));
+        assertFalse(fields.containsKey("ErrorReason"));
+    }
+
+    @Test
+    void setToInfoClearsErrorAndWarningReason() {
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.setToError("oops");
+            ctx.setToInfo();
+        }
+
+        var fields = captured.get(0).fields();
+        assertEquals("Info", fields.get("l"));
+        assertFalse(fields.containsKey("msg"));
     }
 
     @Test
@@ -232,7 +289,7 @@ class EventContextTest {
         assertTrue(fields.containsKey("component"));
         assertTrue(fields.containsKey("operation"));
         assertTrue(fields.containsKey("timeElapsed"));
-        assertTrue(fields.containsKey("errorReason"));
+        assertTrue(fields.containsKey("message"));
         assertTrue(fields.containsKey("count_Hits"));
         assertTrue(fields.containsKey("timeElapsed_DbInsert"));
 
@@ -240,6 +297,7 @@ class EventContextTest {
         assertFalse(fields.containsKey("Component"));
         assertFalse(fields.containsKey("ErrorReason"));
         assertFalse(fields.containsKey("Count_Hits"));
+        assertFalse(fields.containsKey("msg"));
     }
 
     @Test
@@ -262,7 +320,7 @@ class EventContextTest {
     }
 
     @Test
-    void exceptionFieldsUseConventionNames() {
+    void javaConventionUsesCamelCaseForExceptionFields() {
         Configuration.initialize(c -> c
             .naming(NamingConvention.JAVA)
             .providers().add(captured::add));
@@ -281,10 +339,13 @@ class EventContextTest {
 
         var fields = captured.get(0).fields();
         assertEquals("Error", fields.get("level"));
-        assertEquals("An exception has occurred", fields.get("errorReason"));
+        assertEquals("An exception has occurred", fields.get("message"));
         assertEquals(RuntimeException.class.getName(), fields.get("exceptionType"));
         assertEquals("outer", fields.get("exceptionMessage"));
         assertEquals(IllegalStateException.class.getName(), fields.get("innermostExceptionType"));
         assertEquals("inner", fields.get("innermostExceptionMessage"));
+
+        assertFalse(fields.containsKey("Exception_Type"));
+        assertFalse(fields.containsKey("InnermostException_Type"));
     }
 }
