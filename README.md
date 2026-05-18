@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/jiffy-logo.png" alt="Jiffy logo" width="280">
+</p>
+
 # Jiffy
 
 [![Build](https://github.com/jadevance/Jiffy/actions/workflows/build.yml/badge.svg)](https://github.com/jadevance/Jiffy/actions/workflows/build.yml)
