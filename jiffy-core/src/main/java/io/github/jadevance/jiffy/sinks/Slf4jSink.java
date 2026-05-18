@@ -1,5 +1,6 @@
 package io.github.jadevance.jiffy.sinks;
 
+import io.github.jadevance.jiffy.Configuration;
 import io.github.jadevance.jiffy.EventEmission;
 import io.github.jadevance.jiffy.Sink;
 import io.github.jadevance.jiffy.format.KeyValueFormatter;
@@ -12,7 +13,7 @@ public final class Slf4jSink implements Sink {
 
     @Override
     public void emit(EventEmission event) {
-        String line = KeyValueFormatter.format(event.fields());
+        String line = KeyValueFormatter.format(event.fields(), Configuration.active().formatting());
         switch (event.level()) {
             case ERROR   -> LOG.error(line);
             case WARNING -> LOG.warn(line);

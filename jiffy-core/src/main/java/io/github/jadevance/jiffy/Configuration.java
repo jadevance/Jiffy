@@ -1,5 +1,8 @@
 package io.github.jadevance.jiffy;
 
+import io.github.jadevance.jiffy.format.Formatting;
+import io.github.jadevance.jiffy.format.NewlineFormatting;
+import io.github.jadevance.jiffy.format.SpecialValueFormatting;
 import io.github.jadevance.jiffy.sinks.ConsoleSink;
 import io.github.jadevance.jiffy.sinks.Slf4jSink;
 
@@ -11,15 +14,18 @@ import java.util.function.Consumer;
 public final class Configuration {
 
     private static volatile Configuration active = new Configuration(
-        List.of(new Slf4jSink()), NamingConvention.SPIFFY, List.of());
+        List.of(new Slf4jSink()), NamingConvention.SPIFFY, Formatting.DEFAULT, List.of());
 
     private final List<Sink> sinks;
     private final NamingConvention naming;
+    private final Formatting formatting;
     private final List<Consumer<EventContext>> beforeLogging;
 
-    private Configuration(List<Sink> sinks, NamingConvention naming, List<Consumer<EventContext>> beforeLogging) {
+    private Configuration(List<Sink> sinks, NamingConvention naming, Formatting formatting,
+                          List<Consumer<EventContext>> beforeLogging) {
         this.sinks = List.copyOf(sinks);
         this.naming = naming;
+        this.formatting = formatting;
         this.beforeLogging = List.copyOf(beforeLogging);
     }
 
@@ -35,6 +41,10 @@ public final class Configuration {
 
     public NamingConvention naming() {
         return naming;
+    }
+
+    public Formatting formatting() {
+        return formatting;
     }
 
     void invokeBeforeLogging(EventContext ctx) {
@@ -60,6 +70,7 @@ public final class Configuration {
     public static final class Builder {
         private final Providers providers = new Providers();
         private final Callbacks callbacks = new Callbacks();
+        private final Formatting formatting = new Formatting();
         private NamingConvention naming = NamingConvention.SPIFFY;
 
         public Providers providers() {
@@ -70,13 +81,24 @@ public final class Configuration {
             return callbacks;
         }
 
+        public Formatting formatting() {
+            return formatting;
+        }
+
         public Builder naming(NamingConvention naming) {
             this.naming = Objects.requireNonNull(naming, "naming");
             return this;
         }
 
+        public Builder useLogfmt() {
+            formatting
+                .newlines(NewlineFormatting.ESCAPE)
+                .specialValue(SpecialValueFormatting.QUOTE);
+            return this;
+        }
+
         Configuration build() {
-            return new Configuration(providers.sinks, naming, callbacks.beforeLogging);
+            return new Configuration(providers.sinks, naming, formatting, callbacks.beforeLogging);
         }
     }
 
