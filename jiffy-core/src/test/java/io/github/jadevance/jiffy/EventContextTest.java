@@ -170,7 +170,7 @@ class EventContextTest {
     @Test
     void customTimestampRejectsNull() {
         try (var ctx = new EventContext("C", "Op")) {
-            assertThrows(IllegalArgumentException.class, () -> ctx.setCustomTimestamp(null));
+            assertThrows(NullPointerException.class, () -> ctx.setCustomTimestamp(null));
         }
     }
 

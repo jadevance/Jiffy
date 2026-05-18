@@ -5,6 +5,7 @@ import io.github.jadevance.jiffy.sinks.Slf4jSink;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Consumer;
 
 public final class Configuration {
@@ -52,8 +53,7 @@ public final class Configuration {
         }
 
         public Builder naming(NamingConvention naming) {
-            if (naming == null) throw new IllegalArgumentException("naming must not be null");
-            this.naming = naming;
+            this.naming = Objects.requireNonNull(naming, "naming");
             return this;
         }
 

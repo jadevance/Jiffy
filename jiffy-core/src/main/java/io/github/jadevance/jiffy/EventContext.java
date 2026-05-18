@@ -7,6 +7,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Supplier;
 
@@ -14,18 +15,18 @@ public class EventContext implements AutoCloseable {
 
     private final long startNanos = System.nanoTime();
     private final Map<String, Object> fields = new LinkedHashMap<>();
-    private final Map<String, Object> privateData = new LinkedHashMap<>();
-    private final Map<String, TimedScope> timers = new LinkedHashMap<>();
-    private final Map<String, Long> counters = new LinkedHashMap<>();
-    private final Set<String> suppressedFields = new HashSet<>();
     private final Configuration config;
+
+    private Map<String, Object> privateData;
+    private Map<String, TimedScope> timers;
+    private Map<String, Long> counters;
+    private Set<String> suppressedFields;
 
     private Instant startTimestamp = Instant.now();
     private String component;
     private String operation;
     private Level level = Level.INFO;
-    private String errorReason;
-    private String warningReason;
+    private String reason;
     private Throwable capturedException;
     private boolean suppressed = false;
     private boolean closed = false;
@@ -44,9 +45,10 @@ public class EventContext implements AutoCloseable {
         this.config = config;
     }
 
-    public void initialize(String component, String operation) {
+    public EventContext initialize(String component, String operation) {
         this.component = component;
         this.operation = operation;
+        return this;
     }
 
     public EventContext set(String key, Object value) {
@@ -55,16 +57,10 @@ public class EventContext implements AutoCloseable {
 
     public EventContext set(String key, Object value, FieldConflict behavior) {
         if (fields.containsKey(key)) {
-            switch (behavior) {
-                case IGNORE:
-                    return this;
-                case APPEND:
-                    fields.put(key, fields.get(key) + "," + value);
-                    return this;
-                case OVERWRITE:
-                default:
-                    fields.put(key, value);
-                    return this;
+            if (behavior == FieldConflict.IGNORE) return this;
+            if (behavior == FieldConflict.APPEND) {
+                fields.put(key, fields.get(key) + "," + value);
+                return this;
             }
         }
         fields.put(key, value);
@@ -80,16 +76,18 @@ public class EventContext implements AutoCloseable {
     }
 
     public TimedScope time(String key) {
-        TimedScopeImpl scope = new TimedScopeImpl(key);
+        TimedScopeImpl scope = new TimedScopeImpl();
+        if (timers == null) timers = new LinkedHashMap<>();
         timers.put(key, scope);
         return scope;
     }
 
     public Map<String, TimedScope> timers() {
-        return Collections.unmodifiableMap(timers);
+        return timers == null ? Map.of() : Collections.unmodifiableMap(timers);
     }
 
     public EventContext count(String key) {
+        if (counters == null) counters = new LinkedHashMap<>();
         counters.merge(key, 1L, Long::sum);
         return this;
     }
@@ -109,25 +107,25 @@ public class EventContext implements AutoCloseable {
     }
 
     public EventContext setPrivate(String key, Object value) {
+        if (privateData == null) privateData = new LinkedHashMap<>();
         privateData.put(key, value);
         return this;
     }
 
     public Object getPrivate(String key) {
-        return privateData.get(key);
+        return privateData == null ? null : privateData.get(key);
     }
 
     public boolean containsPrivate(String key) {
-        return privateData.containsKey(key);
+        return privateData != null && privateData.containsKey(key);
     }
 
     public Map<String, Object> privateData() {
-        return Collections.unmodifiableMap(privateData);
+        return privateData == null ? Map.of() : Collections.unmodifiableMap(privateData);
     }
 
     public EventContext setCustomTimestamp(Instant timestamp) {
-        if (timestamp == null) throw new IllegalArgumentException("timestamp must not be null");
-        this.startTimestamp = timestamp;
+        this.startTimestamp = Objects.requireNonNull(timestamp, "timestamp");
         return this;
     }
 
@@ -141,26 +139,27 @@ public class EventContext implements AutoCloseable {
         return this;
     }
 
-    public void setLevel(Level level) {
+    public EventContext setLevel(Level level) {
         this.level = level;
+        return this;
     }
 
-    public void setToInfo() {
+    public EventContext setToInfo() {
         this.level = Level.INFO;
-        this.errorReason = null;
-        this.warningReason = null;
+        this.reason = null;
+        return this;
     }
 
-    public void setToWarning(String reason) {
+    public EventContext setToWarning(String reason) {
         this.level = Level.WARNING;
-        this.warningReason = reason;
-        this.errorReason = null;
+        this.reason = reason;
+        return this;
     }
 
-    public void setToError(String reason) {
+    public EventContext setToError(String reason) {
         this.level = Level.ERROR;
-        this.errorReason = reason;
-        this.warningReason = null;
+        this.reason = reason;
+        return this;
     }
 
     public Level level() {
@@ -179,16 +178,19 @@ public class EventContext implements AutoCloseable {
         return (System.nanoTime() - startNanos) / 1_000_000.0;
     }
 
-    public void suppress() {
+    public EventContext suppress() {
         this.suppressed = true;
+        return this;
     }
 
     public boolean isSuppressed() {
         return suppressed;
     }
 
-    public void suppressFields(String... names) {
-        for (String n : names) suppressedFields.add(n);
+    public EventContext suppressFields(String... names) {
+        if (suppressedFields == null) suppressedFields = new HashSet<>();
+        Collections.addAll(suppressedFields, names);
+        return this;
     }
 
     @Override
@@ -200,14 +202,17 @@ public class EventContext implements AutoCloseable {
         Configuration cfg = config != null ? config : Configuration.active();
         NamingConvention naming = cfg.naming();
 
-        Map<String, Object> out = new LinkedHashMap<>(GlobalEventContext.instance().snapshot());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.putAll(GlobalEventContext.instance().snapshot());
         out.put(naming.level(), level.pretty());
         if (component != null) out.put(naming.component(), component);
         if (operation != null) out.put(naming.operation(), operation);
         out.put(naming.timeElapsed(), round1(elapsedMilliseconds()));
 
-        if (errorReason != null) out.put(naming.errorReason(), errorReason);
-        if (warningReason != null) out.put(naming.warningReason(), warningReason);
+        if (reason != null) {
+            String reasonKey = (level == Level.WARNING) ? naming.warningReason() : naming.errorReason();
+            out.put(reasonKey, reason);
+        }
 
         if (capturedException != null) {
             Throwable t = capturedException;
@@ -225,19 +230,23 @@ public class EventContext implements AutoCloseable {
             }
         }
 
-        for (var entry : timers.entrySet()) {
-            TimedScopeImpl scope = (TimedScopeImpl) entry.getValue();
-            if (!scope.isRunning()) {
-                out.put(naming.timeElapsed(scope.key()), round1(scope.elapsedMsAtClose()));
+        if (timers != null) {
+            for (var entry : timers.entrySet()) {
+                TimedScope scope = entry.getValue();
+                if (!scope.isRunning()) {
+                    out.put(naming.timeElapsed(entry.getKey()), round1(scope.elapsedMilliseconds()));
+                }
             }
         }
 
-        for (var entry : counters.entrySet()) {
-            out.put(naming.count(entry.getKey()), entry.getValue());
+        if (counters != null) {
+            for (var entry : counters.entrySet()) {
+                out.put(naming.count(entry.getKey()), entry.getValue());
+            }
         }
 
         for (var entry : fields.entrySet()) {
-            if (suppressedFields.contains(entry.getKey())) continue;
+            if (suppressedFields != null && suppressedFields.contains(entry.getKey())) continue;
             out.put(entry.getKey(), entry.getValue());
         }
 
@@ -252,13 +261,8 @@ public class EventContext implements AutoCloseable {
     }
 
     private final class TimedScopeImpl implements TimedScope {
-        private final String key;
         private final long timerStartNanos = System.nanoTime();
         private long elapsedNanos = -1L;
-
-        TimedScopeImpl(String key) {
-            this.key = key;
-        }
 
         @Override
         public void close() {
@@ -275,14 +279,6 @@ public class EventContext implements AutoCloseable {
         @Override
         public boolean isRunning() {
             return elapsedNanos < 0L;
-        }
-
-        String key() {
-            return key;
-        }
-
-        double elapsedMsAtClose() {
-            return elapsedNanos < 0L ? 0.0 : elapsedNanos / 1_000_000.0;
         }
     }
 

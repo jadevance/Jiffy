@@ -10,15 +10,15 @@ public interface NamingConvention {
     String errorReason();
     String warningReason();
 
-    String exceptionType();
-    String exceptionMessage();
-    String exceptionStackTrace();
-    String innermostExceptionType();
-    String innermostExceptionMessage();
-    String innermostExceptionStackTrace();
-
     String timeElapsed(String key);
     String count(String key);
+
+    default String exceptionType() { return "Exception_Type"; }
+    default String exceptionMessage() { return "Exception_Message"; }
+    default String exceptionStackTrace() { return "Exception_StackTrace"; }
+    default String innermostExceptionType() { return "InnermostException_Type"; }
+    default String innermostExceptionMessage() { return "InnermostException_Message"; }
+    default String innermostExceptionStackTrace() { return "InnermostException_StackTrace"; }
 
     NamingConvention SPIFFY = new SpiffyNamingConvention();
     NamingConvention LEGACY = new LegacyNamingConvention();
