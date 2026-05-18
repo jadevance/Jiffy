@@ -416,6 +416,46 @@ class EventContextTest {
     }
 
     @Test
+    void beforeLoggingCallbackRunsBeforeEmission() {
+        Configuration.initialize(c -> {
+            c.callbacks().beforeLogging(ctx -> ctx.set("Injected", "fromCallback"));
+            c.providers().add(captured::add);
+        });
+
+        try (var ctx = new EventContext("C", "Op")) { /* no-op */ }
+
+        var fields = captured.get(0).fields();
+        assertEquals("fromCallback", fields.get("Injected"));
+    }
+
+    @Test
+    void beforeLoggingCallbacksFireInRegistrationOrder() {
+        var marks = new java.util.ArrayList<String>();
+        Configuration.initialize(c -> {
+            c.callbacks()
+                .beforeLogging(ctx -> marks.add("first"))
+                .beforeLogging(ctx -> marks.add("second"));
+            c.providers().add(captured::add);
+        });
+
+        try (var ctx = new EventContext("C", "Op")) { /* no-op */ }
+
+        assertEquals(List.of("first", "second"), marks);
+    }
+
+    @Test
+    void misbehavingBeforeLoggingCallbackDoesNotBreakEmission() {
+        Configuration.initialize(c -> {
+            c.callbacks().beforeLogging(ctx -> { throw new RuntimeException("oops"); });
+            c.providers().add(captured::add);
+        });
+
+        try (var ctx = new EventContext("C", "Op")) { /* no-op */ }
+
+        assertEquals(1, captured.size());
+    }
+
+    @Test
     void setToWarningParameterlessSetsLevelWithoutReason() {
         try (var ctx = new EventContext("C", "Op")) {
             ctx.setToWarning();
@@ -423,6 +463,68 @@ class EventContextTest {
         var fields = captured.get(0).fields();
         assertEquals("Warning", fields.get("l"));
         assertFalse(fields.containsKey("msg"));
+    }
+
+    @Test
+    void includeStructureExtractsRecordComponents() {
+        record Customer(String name, int orderCount) {}
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.includeStructure(new Customer("Jade", 7));
+        }
+        var fields = captured.get(0).fields();
+        assertEquals("Jade", fields.get("name"));
+        assertEquals(7, fields.get("orderCount"));
+    }
+
+    @Test
+    void includeStructureAppliesKeyPrefix() {
+        record Customer(String name) {}
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.includeStructure(new Customer("Jade"), "user");
+        }
+        assertEquals("Jade", captured.get(0).fields().get("user_name"));
+    }
+
+    @Test
+    void includeStructureSkipsNullsByDefault() {
+        record Customer(String name, String optional) {}
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.includeStructure(new Customer("Jade", null));
+        }
+        var fields = captured.get(0).fields();
+        assertTrue(fields.containsKey("name"));
+        assertFalse(fields.containsKey("optional"));
+    }
+
+    @Test
+    void includeStructureIncludesNullsWhenFlagged() {
+        record Customer(String name, String optional) {}
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.includeStructure(new Customer("Jade", null), null, true);
+        }
+        assertTrue(captured.get(0).fields().containsKey("optional"));
+    }
+
+    @Test
+    void includeStructureIgnoresNullStructure() {
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.includeStructure(null);
+        }
+        assertEquals(1, captured.size());
+    }
+
+    @Test
+    void includeStructureExtractsBeanGetters() {
+        class Bean {
+            public String getFirst() { return "a"; }
+            public int getSecond() { return 42; }
+        }
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.includeStructure(new Bean());
+        }
+        var fields = captured.get(0).fields();
+        assertEquals("a", fields.get("first"));
+        assertEquals(42, fields.get("second"));
     }
 
     @Test

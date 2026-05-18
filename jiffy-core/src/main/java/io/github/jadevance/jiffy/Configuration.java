@@ -10,14 +10,17 @@ import java.util.function.Consumer;
 
 public final class Configuration {
 
-    private static volatile Configuration active = new Configuration(List.of(new Slf4jSink()), NamingConvention.SPIFFY);
+    private static volatile Configuration active = new Configuration(
+        List.of(new Slf4jSink()), NamingConvention.SPIFFY, List.of());
 
     private final List<Sink> sinks;
     private final NamingConvention naming;
+    private final List<Consumer<EventContext>> beforeLogging;
 
-    private Configuration(List<Sink> sinks, NamingConvention naming) {
+    private Configuration(List<Sink> sinks, NamingConvention naming, List<Consumer<EventContext>> beforeLogging) {
         this.sinks = List.copyOf(sinks);
         this.naming = naming;
+        this.beforeLogging = List.copyOf(beforeLogging);
     }
 
     public static void initialize(Consumer<Builder> setup) {
@@ -34,6 +37,16 @@ public final class Configuration {
         return naming;
     }
 
+    void invokeBeforeLogging(EventContext ctx) {
+        for (Consumer<EventContext> cb : beforeLogging) {
+            try {
+                cb.accept(ctx);
+            } catch (Throwable ignored) {
+                // a misbehaving callback must not break the emitting code path
+            }
+        }
+    }
+
     void emit(EventEmission event) {
         for (Sink s : sinks) {
             try {
@@ -46,10 +59,15 @@ public final class Configuration {
 
     public static final class Builder {
         private final Providers providers = new Providers();
+        private final Callbacks callbacks = new Callbacks();
         private NamingConvention naming = NamingConvention.SPIFFY;
 
         public Providers providers() {
             return providers;
+        }
+
+        public Callbacks callbacks() {
+            return callbacks;
         }
 
         public Builder naming(NamingConvention naming) {
@@ -58,7 +76,7 @@ public final class Configuration {
         }
 
         Configuration build() {
-            return new Configuration(providers.sinks, naming);
+            return new Configuration(providers.sinks, naming, callbacks.beforeLogging);
         }
     }
 
@@ -77,6 +95,15 @@ public final class Configuration {
 
         public Providers add(Sink sink) {
             sinks.add(sink);
+            return this;
+        }
+    }
+
+    public static final class Callbacks {
+        private final List<Consumer<EventContext>> beforeLogging = new ArrayList<>();
+
+        public Callbacks beforeLogging(Consumer<EventContext> callback) {
+            beforeLogging.add(Objects.requireNonNull(callback, "callback"));
             return this;
         }
     }

@@ -1,7 +1,13 @@
 package io.github.jadevance.jiffy;
 
+import java.beans.BeanInfo;
+import java.beans.IntrospectionException;
+import java.beans.Introspector;
+import java.beans.PropertyDescriptor;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.lang.reflect.Method;
+import java.lang.reflect.RecordComponent;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -103,6 +109,46 @@ public class EventContext implements AutoCloseable {
             set(e.getKey(), e.getValue());
         }
         return this;
+    }
+
+    public EventContext includeStructure(Object structure) {
+        return includeStructure(structure, null, false);
+    }
+
+    public EventContext includeStructure(Object structure, String keyPrefix) {
+        return includeStructure(structure, keyPrefix, false);
+    }
+
+    public EventContext includeStructure(Object structure, String keyPrefix, boolean includeNullValues) {
+        if (structure == null) return this;
+        Class<?> clazz = structure.getClass();
+        if (clazz.isRecord()) {
+            for (RecordComponent rc : clazz.getRecordComponents()) {
+                try {
+                    Object value = rc.getAccessor().invoke(structure);
+                    if (value == null && !includeNullValues) continue;
+                    set(composeStructureKey(keyPrefix, rc.getName()), value);
+                } catch (ReflectiveOperationException ignored) {}
+            }
+            return this;
+        }
+        try {
+            BeanInfo info = Introspector.getBeanInfo(clazz, Object.class);
+            for (PropertyDescriptor pd : info.getPropertyDescriptors()) {
+                Method reader = pd.getReadMethod();
+                if (reader == null) continue;
+                try {
+                    Object value = reader.invoke(structure);
+                    if (value == null && !includeNullValues) continue;
+                    set(composeStructureKey(keyPrefix, pd.getName()), value);
+                } catch (ReflectiveOperationException ignored) {}
+            }
+        } catch (IntrospectionException ignored) {}
+        return this;
+    }
+
+    private static String composeStructureKey(String prefix, String name) {
+        return (prefix == null || prefix.isEmpty()) ? name : prefix + "_" + name;
     }
 
     public TimedScope time(String key) {
@@ -240,9 +286,12 @@ public class EventContext implements AutoCloseable {
     public void close() {
         if (closed) return;
         closed = true;
-        if (suppressed) return;
 
         Configuration cfg = config != null ? config : Configuration.active();
+        cfg.invokeBeforeLogging(this);
+
+        if (suppressed) return;
+
         NamingConvention naming = cfg.naming();
 
         Map<String, Object> out = new LinkedHashMap<>();
