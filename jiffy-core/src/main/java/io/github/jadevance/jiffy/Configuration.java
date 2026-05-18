@@ -9,12 +9,14 @@ import java.util.function.Consumer;
 
 public final class Configuration {
 
-    private static volatile Configuration active = new Configuration(List.of(new Slf4jSink()));
+    private static volatile Configuration active = new Configuration(List.of(new Slf4jSink()), NamingConvention.SPIFFY);
 
     private final List<Sink> sinks;
+    private final NamingConvention naming;
 
-    private Configuration(List<Sink> sinks) {
+    private Configuration(List<Sink> sinks, NamingConvention naming) {
         this.sinks = List.copyOf(sinks);
+        this.naming = naming;
     }
 
     public static void initialize(Consumer<Builder> setup) {
@@ -25,6 +27,10 @@ public final class Configuration {
 
     public static Configuration active() {
         return active;
+    }
+
+    public NamingConvention naming() {
+        return naming;
     }
 
     void emit(EventEmission event) {
@@ -39,13 +45,20 @@ public final class Configuration {
 
     public static final class Builder {
         private final Providers providers = new Providers();
+        private NamingConvention naming = NamingConvention.SPIFFY;
 
         public Providers providers() {
             return providers;
         }
 
+        public Builder naming(NamingConvention naming) {
+            if (naming == null) throw new IllegalArgumentException("naming must not be null");
+            this.naming = naming;
+            return this;
+        }
+
         Configuration build() {
-            return new Configuration(providers.sinks);
+            return new Configuration(providers.sinks, naming);
         }
     }
 

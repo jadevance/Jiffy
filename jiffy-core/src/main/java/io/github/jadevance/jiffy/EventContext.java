@@ -16,6 +16,7 @@ public class EventContext implements AutoCloseable {
     private final Map<String, Object> fields = new LinkedHashMap<>();
     private final Map<String, Object> privateData = new LinkedHashMap<>();
     private final Map<String, TimedScope> timers = new LinkedHashMap<>();
+    private final Map<String, Long> counters = new LinkedHashMap<>();
     private final Set<String> suppressedFields = new HashSet<>();
     private final Configuration config;
 
@@ -23,6 +24,9 @@ public class EventContext implements AutoCloseable {
     private String component;
     private String operation;
     private Level level = Level.INFO;
+    private String errorReason;
+    private String warningReason;
+    private Throwable capturedException;
     private boolean suppressed = false;
     private boolean closed = false;
 
@@ -86,10 +90,7 @@ public class EventContext implements AutoCloseable {
     }
 
     public EventContext count(String key) {
-        String fieldKey = FieldName.count(key);
-        Object existing = fields.get(fieldKey);
-        long current = existing instanceof Number n ? n.longValue() : 0L;
-        fields.put(fieldKey, current + 1);
+        counters.merge(key, 1L, Long::sum);
         return this;
     }
 
@@ -136,18 +137,7 @@ public class EventContext implements AutoCloseable {
 
     public EventContext includeException(Throwable t) {
         setToError("An exception has occurred");
-        set(FieldName.EXCEPTION_TYPE, t.getClass().getName());
-        set(FieldName.EXCEPTION_MESSAGE, String.valueOf(t.getMessage()));
-        set(FieldName.EXCEPTION_STACK_TRACE, stackTraceString(t));
-        Throwable innermost = t;
-        while (innermost.getCause() != null && innermost.getCause() != innermost) {
-            innermost = innermost.getCause();
-        }
-        if (innermost != t) {
-            set(FieldName.INNERMOST_EXCEPTION_TYPE, innermost.getClass().getName());
-            set(FieldName.INNERMOST_EXCEPTION_MESSAGE, String.valueOf(innermost.getMessage()));
-            set(FieldName.INNERMOST_EXCEPTION_STACK_TRACE, stackTraceString(innermost));
-        }
+        this.capturedException = t;
         return this;
     }
 
@@ -161,12 +151,12 @@ public class EventContext implements AutoCloseable {
 
     public void setToWarning(String reason) {
         this.level = Level.WARNING;
-        if (reason != null) set(FieldName.WARNING_REASON, reason);
+        this.warningReason = reason;
     }
 
     public void setToError(String reason) {
         this.level = Level.ERROR;
-        if (reason != null) set(FieldName.ERROR_REASON, reason);
+        this.errorReason = reason;
     }
 
     public Level level() {
@@ -203,17 +193,50 @@ public class EventContext implements AutoCloseable {
         closed = true;
         if (suppressed) return;
 
+        Configuration cfg = config != null ? config : Configuration.active();
+        NamingConvention naming = cfg.naming();
+
         Map<String, Object> out = new LinkedHashMap<>(GlobalEventContext.instance().snapshot());
-        out.put(FieldName.LEVEL, level.pretty());
-        if (component != null) out.put(FieldName.COMPONENT, component);
-        if (operation != null) out.put(FieldName.OPERATION, operation);
-        out.put(FieldName.TIME_ELAPSED, round1(elapsedMilliseconds()));
-        for (Map.Entry<String, Object> e : fields.entrySet()) {
-            if (suppressedFields.contains(e.getKey())) continue;
-            out.put(e.getKey(), e.getValue());
+        out.put(naming.level(), level.pretty());
+        if (component != null) out.put(naming.component(), component);
+        if (operation != null) out.put(naming.operation(), operation);
+        out.put(naming.timeElapsed(), round1(elapsedMilliseconds()));
+
+        if (errorReason != null) out.put(naming.errorReason(), errorReason);
+        if (warningReason != null) out.put(naming.warningReason(), warningReason);
+
+        if (capturedException != null) {
+            Throwable t = capturedException;
+            out.put(naming.exceptionType(), t.getClass().getName());
+            out.put(naming.exceptionMessage(), String.valueOf(t.getMessage()));
+            out.put(naming.exceptionStackTrace(), stackTraceString(t));
+            Throwable innermost = t;
+            while (innermost.getCause() != null && innermost.getCause() != innermost) {
+                innermost = innermost.getCause();
+            }
+            if (innermost != t) {
+                out.put(naming.innermostExceptionType(), innermost.getClass().getName());
+                out.put(naming.innermostExceptionMessage(), String.valueOf(innermost.getMessage()));
+                out.put(naming.innermostExceptionStackTrace(), stackTraceString(innermost));
+            }
         }
 
-        Configuration cfg = config != null ? config : Configuration.active();
+        for (var entry : timers.entrySet()) {
+            TimedScopeImpl scope = (TimedScopeImpl) entry.getValue();
+            if (!scope.isRunning()) {
+                out.put(naming.timeElapsed(scope.key()), round1(scope.elapsedMsAtClose()));
+            }
+        }
+
+        for (var entry : counters.entrySet()) {
+            out.put(naming.count(entry.getKey()), entry.getValue());
+        }
+
+        for (var entry : fields.entrySet()) {
+            if (suppressedFields.contains(entry.getKey())) continue;
+            out.put(entry.getKey(), entry.getValue());
+        }
+
         cfg.emit(new EventEmission(startTimestamp, level, out));
     }
 
@@ -237,7 +260,6 @@ public class EventContext implements AutoCloseable {
         public void close() {
             if (elapsedNanos >= 0L) return;
             elapsedNanos = System.nanoTime() - timerStartNanos;
-            fields.put(FieldName.timeElapsed(key), round1(elapsedNanos / 1_000_000.0));
         }
 
         @Override
@@ -249,6 +271,14 @@ public class EventContext implements AutoCloseable {
         @Override
         public boolean isRunning() {
             return elapsedNanos < 0L;
+        }
+
+        String key() {
+            return key;
+        }
+
+        double elapsedMsAtClose() {
+            return elapsedNanos < 0L ? 0.0 : elapsedNanos / 1_000_000.0;
         }
     }
 

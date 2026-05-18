@@ -204,4 +204,87 @@ class EventContextTest {
             assertThrows(UnsupportedOperationException.class, () -> ctx.timers().clear());
         }
     }
+
+    @Test
+    void defaultConventionIsSpiffy() {
+        try (var ctx = new EventContext("UserSvc", "Op")) { /* no-op */ }
+        var fields = captured.get(0).fields();
+        assertTrue(fields.containsKey("Level"));
+        assertTrue(fields.containsKey("Component"));
+        assertTrue(fields.containsKey("Operation"));
+        assertTrue(fields.containsKey("TimeElapsed"));
+    }
+
+    @Test
+    void javaConventionEmitsCamelCaseStandardFields() {
+        Configuration.initialize(c -> c
+            .naming(NamingConvention.JAVA)
+            .providers().add(captured::add));
+
+        try (var ctx = new EventContext("UserSvc", "Op")) {
+            ctx.setToError("bad");
+            ctx.count("Hits");
+            try (var t = ctx.time("DbInsert")) { /* no-op */ }
+        }
+
+        var fields = captured.get(0).fields();
+        assertTrue(fields.containsKey("level"));
+        assertTrue(fields.containsKey("component"));
+        assertTrue(fields.containsKey("operation"));
+        assertTrue(fields.containsKey("timeElapsed"));
+        assertTrue(fields.containsKey("errorReason"));
+        assertTrue(fields.containsKey("count_Hits"));
+        assertTrue(fields.containsKey("timeElapsed_DbInsert"));
+
+        assertFalse(fields.containsKey("Level"));
+        assertFalse(fields.containsKey("Component"));
+        assertFalse(fields.containsKey("ErrorReason"));
+        assertFalse(fields.containsKey("Count_Hits"));
+    }
+
+    @Test
+    void userSetFieldsPassThroughVerbatimUnderAnyConvention() {
+        Configuration.initialize(c -> c
+            .naming(NamingConvention.JAVA)
+            .providers().add(captured::add));
+
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.set("UserId", 42);
+            ctx.set("user_role", "admin");
+            ctx.set("Component", "userOverride");
+        }
+
+        var fields = captured.get(0).fields();
+        assertEquals(42, fields.get("UserId"));
+        assertEquals("admin", fields.get("user_role"));
+        assertEquals("userOverride", fields.get("Component"));
+        assertEquals("C", fields.get("component"), "library-emitted component uses Java convention");
+    }
+
+    @Test
+    void exceptionFieldsUseConventionNames() {
+        Configuration.initialize(c -> c
+            .naming(NamingConvention.JAVA)
+            .providers().add(captured::add));
+
+        try (var ctx = new EventContext("C", "Op")) {
+            try {
+                try {
+                    throw new IllegalStateException("inner");
+                } catch (IllegalStateException e) {
+                    throw new RuntimeException("outer", e);
+                }
+            } catch (RuntimeException e) {
+                ctx.includeException(e);
+            }
+        }
+
+        var fields = captured.get(0).fields();
+        assertEquals("Error", fields.get("level"));
+        assertEquals("An exception has occurred", fields.get("errorReason"));
+        assertEquals(RuntimeException.class.getName(), fields.get("exceptionType"));
+        assertEquals("outer", fields.get("exceptionMessage"));
+        assertEquals(IllegalStateException.class.getName(), fields.get("innermostExceptionType"));
+        assertEquals("inner", fields.get("innermostExceptionMessage"));
+    }
 }

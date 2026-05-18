@@ -85,7 +85,7 @@ Configuration.initialize(c -> c
 | `TimerCollection Timers` property | done | `timers()` returns an unmodifiable `Map<String, TimedScope>`; each scope exposes `elapsedMilliseconds()` and `isRunning()` |
 | `PrivateData`          | done  | `setPrivate / getPrivate / containsPrivate / privateData()`; never emitted |
 | `CustomTimestamp`      | done  | `setCustomTimestamp(Instant)`; overrides the event timestamp at emit time |
-| `FieldName` lookup     | done  | `FieldName` class with canonical constants (`FieldName.APPLICATION`, `FieldName.TIME_ELAPSED`, etc.) plus `FieldName.timeElapsed(key)` / `FieldName.count(key)` helpers |
+| `FieldName` lookup     | done  | Replaced by pluggable [`NamingConvention`](#naming-conventions); `NamingConvention.SPIFFY` (default) returns Spiffy canonical names, `NamingConvention.JAVA` returns camelCase |
 
 ## Advanced usage
 
@@ -118,6 +118,26 @@ try (var ctx = new EventContext("Pipeline", "Run")) {
     t.close();
 }
 ```
+
+## Naming conventions
+
+Jiffy ships two naming conventions for **library-emitted standard fields** (`Level`, `Component`, `Operation`, `TimeElapsed`, `ErrorReason`, `Exception_Type`, …):
+
+- `NamingConvention.SPIFFY` — **default**. Matches the .NET Spiffy library exactly so Splunk dashboards, alerts, and queries written against a Spiffy stack work unchanged.
+- `NamingConvention.JAVA` — idiomatic Java camelCase (`level`, `component`, `timeElapsed`, `errorReason`, `exceptionType`, `timeElapsed_DbInsert`, `count_Hits`). For projects that don't share Splunk infrastructure with a Spiffy-based service and prefer Java conventions in their log output.
+
+Select at configuration time:
+
+```java
+Configuration.initialize(c -> c
+    .naming(NamingConvention.JAVA)
+    .providers().slf4j()
+);
+```
+
+**Scope**: only library-emitted standard fields go through the convention. User-provided keys passed to `set(...)` are emitted verbatim — your `ctx.set("UserId", 42)` always emits `UserId=42` regardless of the active convention. This keeps the convention boundary explicit and lets you adopt your own house style for domain fields.
+
+Custom conventions: implement `NamingConvention` directly if you need snake_case, SCREAMING_SNAKE, or anything else.
 
 ## License
 
