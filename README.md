@@ -82,10 +82,42 @@ Configuration.initialize(c -> c
 | `AppendToValue`        | done  | |
 | `Configuration.Initialize` | done | `Configuration.initialize(...)` |
 | `GlobalEventContext.Instance` | done | `GlobalEventContext.instance()` |
-| `TimerCollection Timers` property | — | not exposed; rarely used by callers |
-| `PrivateData`          | —     | not yet |
-| `CustomTimestamp`      | —     | not yet |
-| `FieldName` lookup     | —     | not yet |
+| `TimerCollection Timers` property | done | `timers()` returns an unmodifiable `Map<String, TimedScope>`; each scope exposes `elapsedMilliseconds()` and `isRunning()` |
+| `PrivateData`          | done  | `setPrivate / getPrivate / containsPrivate / privateData()`; never emitted |
+| `CustomTimestamp`      | done  | `setCustomTimestamp(Instant)`; overrides the event timestamp at emit time |
+| `FieldName` lookup     | done  | `FieldName` class with canonical constants (`FieldName.APPLICATION`, `FieldName.TIME_ELAPSED`, etc.) plus `FieldName.timeElapsed(key)` / `FieldName.count(key)` helpers |
+
+## Advanced usage
+
+**Private data** — stash values you want available during the event but kept out of the emitted log:
+
+```java
+try (var ctx = new EventContext("UserService", "CreateUser")) {
+    ctx.setPrivate("RawToken", token);   // not emitted
+    ctx.set("UserId", userId);           // emitted
+}
+```
+
+**Custom timestamp** — useful when backfilling events from an upstream stream:
+
+```java
+try (var ctx = new EventContext("Replay", "Ingest")) {
+    ctx.setCustomTimestamp(record.originalTimestamp());
+}
+```
+
+**Timers collection** — introspect timers mid-event (e.g., to make routing decisions while a sub-operation is in flight):
+
+```java
+try (var ctx = new EventContext("Pipeline", "Run")) {
+    var t = ctx.time("Stage1");
+    // ... work ...
+    if (ctx.timers().get("Stage1").elapsedMilliseconds() > 500) {
+        ctx.set("SlowPath", true);
+    }
+    t.close();
+}
+```
 
 ## License
 

@@ -3,6 +3,7 @@ package io.github.jadevance.jiffy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -138,5 +139,69 @@ class EventContextTest {
         assertEquals("test-app", fields.get("Application"));
         var keys = fields.keySet().iterator();
         assertEquals("Application", keys.next(), "global fields must appear before standard fields");
+    }
+
+    @Test
+    void privateDataIsAccessibleDuringEventButNotEmitted() {
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.setPrivate("InternalId", "abc-123");
+            ctx.set("Public", "ok");
+
+            assertEquals("abc-123", ctx.getPrivate("InternalId"));
+            assertTrue(ctx.containsPrivate("InternalId"));
+            assertFalse(ctx.containsPrivate("Missing"));
+            assertEquals(1, ctx.privateData().size());
+        }
+
+        var fields = captured.get(0).fields();
+        assertEquals("ok", fields.get("Public"));
+        assertFalse(fields.containsKey("InternalId"), "private data must not be emitted");
+    }
+
+    @Test
+    void customTimestampOverridesEventTimestamp() {
+        Instant custom = Instant.parse("2020-01-15T12:00:00Z");
+        try (var ctx = new EventContext("C", "Op")) {
+            ctx.setCustomTimestamp(custom);
+        }
+        assertEquals(custom, captured.get(0).timestamp());
+    }
+
+    @Test
+    void customTimestampRejectsNull() {
+        try (var ctx = new EventContext("C", "Op")) {
+            assertThrows(IllegalArgumentException.class, () -> ctx.setCustomTimestamp(null));
+        }
+    }
+
+    @Test
+    void timersCollectionExposesInFlightAndCompletedTimers() throws Exception {
+        try (var ctx = new EventContext("C", "Op")) {
+            var outer = ctx.time("Outer");
+            try (var inner = ctx.time("Inner")) {
+                Thread.sleep(2);
+                assertTrue(inner.isRunning());
+                assertTrue(inner.elapsedMilliseconds() >= 0.0);
+
+                var snapshot = ctx.timers();
+                assertEquals(2, snapshot.size());
+                assertTrue(snapshot.containsKey("Outer"));
+                assertTrue(snapshot.containsKey("Inner"));
+            }
+            assertFalse(ctx.timers().get("Inner").isRunning(), "closed timer should report not running");
+            assertTrue(ctx.timers().get("Outer").isRunning(), "unclosed timer should still be running");
+            outer.close();
+        }
+        var fields = captured.get(0).fields();
+        assertNotNull(fields.get("TimeElapsed_Outer"));
+        assertNotNull(fields.get("TimeElapsed_Inner"));
+    }
+
+    @Test
+    void timersMapIsUnmodifiable() {
+        try (var ctx = new EventContext("C", "Op")) {
+            try (var t = ctx.time("X")) { /* no-op */ }
+            assertThrows(UnsupportedOperationException.class, () -> ctx.timers().clear());
+        }
     }
 }
